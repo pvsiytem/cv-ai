@@ -1,7 +1,7 @@
 # .env file 
 QDRANT_URL=http://qdrant:6333
 PORT=3000
-GROQ_API_KEY=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
+GROQ_API_KEY=insertapikeyhere
 
 # How to run
 docker compose down
