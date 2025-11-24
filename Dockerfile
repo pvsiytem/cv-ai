@@ -1,4 +1,3 @@
-# E:\cv-ai\Dockerfile
 FROM node:18-bullseye
 
 # install python3 & pip (required for fastembed helper)
@@ -10,7 +9,7 @@ COPY package*.json ./
 RUN npm install
 
 # install fastembed and any python deps used by the helper
-# note: fastembed will download model artifacts on first run inside container
+# fastembed will download model artifacts on first run inside container
 RUN python3 -m pip install --upgrade pip
 RUN python3 -m pip install fastembed
 

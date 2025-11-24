@@ -1,20 +1,33 @@
 // src/ingest.js
 import fs from "fs";
-import { QdrantClient } from "@qdrant/js-client-rest";
 import pdf from "pdf-parse";
+import { QdrantClient } from "@qdrant/js-client-rest";
 import { getEmbeddings } from "./fastembed-wrapper.js";
 
 const QDRANT_URL = process.env.QDRANT_URL || "http://localhost:6333";
-const COLLECTION = "manual_ingest";
-const UPLOAD_PATH = "/mnt/data/Audry Angelina Wijaya - CV.pdf"; // your uploaded CV path
 
-async function readPdf(pdfPath) {
-  const buffer = fs.readFileSync(pdfPath);
+// Collections
+const SYSTEM_COLLECTION = "system_docs";
+const USER_COLLECTION = "manual_ingest";
+
+// folders
+const systemDir = "src/system";
+const uploadDir = "src/uploads";
+
+//PDF read helper
+async function readPdf(path) {
+  const buffer = fs.readFileSync(path);
   const data = await pdf(buffer);
   return data.text;
 }
 
-function chunkText(text, size = 800, overlap = 100) {
+// simple text chunker
+function chunk(text) {
+  return text.split(/\n\s*\n/).map(t => t.trim()).filter(t => t.length > 80);
+}
+
+// CHUNKIER text chunker 
+function chunkLarge(text, size = 800, overlap = 100) {
   const chunks = [];
   let i = 0;
   while (i < text.length) {
@@ -27,42 +40,71 @@ function chunkText(text, size = 800, overlap = 100) {
   return chunks;
 }
 
-async function main() {
+// ingest system documents
+async function ingestSystem() {
   const client = new QdrantClient({ url: QDRANT_URL });
-  const text = await readPdf(UPLOAD_PATH);
-  const chunks = chunkText(text);
+  const files = fs.readdirSync(systemDir).filter(f => f.endsWith(".pdf"));
 
-  const batchSize = 25;
-  const embeddings = [];
-
-  for (let i = 0; i < chunks.length; i += batchSize) {
-    const batch = chunks.slice(i, i + batchSize);
-    const result = await getEmbeddings(batch);
-    embeddings.push(...result);
+  const docs = [];
+  for (const file of files) {
+    const text = await readPdf(`${systemDir}/${file}`);
+    const chunks = chunk(text);
+    const type = file.toLowerCase().includes("project") ? "project" : "cv";
+    chunks.forEach((c, i) => docs.push({ text: c, source: file, type, idx: i }));
   }
 
-await client.recreateCollection(COLLECTION, {
-  vectors: {
-    size: embeddings[0].length,
-    distance: "Cosine"
+  const embeddings = await getEmbeddings(docs.map(d => d.text));
+
+  await client.recreateCollection(SYSTEM_COLLECTION, {
+    vectors: { size: embeddings[0].length, distance: "Cosine" }
+  });
+
+  await client.upsert(SYSTEM_COLLECTION, {
+    points: docs.map((d, i) => ({
+      id: i + 1,
+      vector: embeddings[i],
+      payload: { ...d }
+    }))
+  });
+
+  console.log(`System docs ingested (${docs.length})`);
+}
+
+// ingest user uploaded document
+async function ingestUser() {
+  const client = new QdrantClient({ url: QDRANT_URL });
+  const files = fs.readdirSync(uploadDir);
+
+  if (!files.length) {
+    console.log("No user file to ingest. Skipping manual_ingest.");
+    return;
   }
-});
 
+  const uploadPath = `${uploadDir}/${files[0]}`;
+  const text = await readPdf(uploadPath);
+  const chunks = chunkLarge(text);
 
-  const points = chunks.map((c, i) => ({
-    id: i + 1,
-    vector: embeddings[i],
-    payload: { source: "uploaded_cv", text: c, idx: i }
-  }));
+  const embeddings = await getEmbeddings(chunks);
 
-await client.upsert(COLLECTION, {
-  points: chunks.map((c, i) => ({
-    id: i + 1,
-    vector: embeddings[i],
-    payload: { source: "uploaded_cv", text: c, idx: i }
-  }))
-});
-  console.log("Manual ingest complete. points:", points.length);
+  await client.recreateCollection(USER_COLLECTION, {
+    vectors: { size: embeddings[0].length, distance: "Cosine" }
+  });
+
+  await client.upsert(USER_COLLECTION, {
+    points: chunks.map((c, i) => ({
+      id: i + 1,
+      vector: embeddings[i],
+      payload: { source: files[0], text: c, idx: i }
+    }))
+  });
+
+  console.log(`User manual ingest complete (${chunks.length} chunks)`);
+}
+
+// runs concurrently
+async function main() {
+  await ingestSystem();
+  await ingestUser();
 }
 
 main().catch(err => {

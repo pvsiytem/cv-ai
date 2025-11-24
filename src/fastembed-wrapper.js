@@ -1,10 +1,6 @@
 // src/fastembed-wrapper.js
 import { spawn } from "child_process";
 
-/**
- * getEmbeddings(texts: string[]) -> Promise<number[][]>
- * Calls python helper (src/fastembed_helper.py).
- */
 export async function getEmbeddings(texts) {
   if (!Array.isArray(texts)) throw new Error("texts must be array");
   return await spawnPythonEmbeddings(texts);
